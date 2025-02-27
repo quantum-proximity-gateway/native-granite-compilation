@@ -7,6 +7,9 @@
 
 #include "llama.h"
 
+// TODO:
+// Fix GGML bindings
+
 int main(int argc, char** argv) {
 
     if (argc < 3) {
@@ -15,7 +18,8 @@ int main(int argc, char** argv) {
     }
 
     const std::string model_path = argv[1];
-    const std::string prompt     = argv[2];
+
+    const std::string user     = argv[2];
 
     // 1. Set llama model and context parameters
     struct llama_model_params mparams = llama_model_default_params();
@@ -35,6 +39,9 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+
+    
+
     // 3. Create a new context
     struct llama_context* ctx = llama_init_from_model(model, ctx_params);
 
@@ -43,6 +50,27 @@ int main(int argc, char** argv) {
         llama_model_free(model);
         return 1;
     }
+
+
+    // Prepare prompt
+    std::vector<llama_chat_message> messages;
+    std::vector<char> formatted(llama_n_ctx(ctx));
+    const char * tmpl = llama_model_chat_template(model, /* name */ nullptr);
+
+        // add the user input to the message list and format it
+        messages.push_back({"user", strdup(user.c_str())});
+        int new_len = llama_chat_apply_template(tmpl, messages.data(), messages.size(), true, formatted.data(), formatted.size());
+        if (new_len > (int)formatted.size()) {
+            formatted.resize(new_len);
+            new_len = llama_chat_apply_template(tmpl, messages.data(), messages.size(), true, formatted.data(), formatted.size());
+        }
+        if (new_len < 0) {
+            fprintf(stderr, "failed to apply the chat template\n");
+            return 1;
+        }
+
+        // remove previous messages to obtain the prompt to generate the response
+        std::string prompt(formatted.begin(), formatted.begin() + new_len);
 
     // 4. Tokenize prompt
     // Use the model’s vocab and call llama_tokenize
