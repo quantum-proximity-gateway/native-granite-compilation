@@ -23,14 +23,14 @@ int main(int argc, char** argv) {
 
     // 1. Set llama model and context parameters
     struct llama_model_params mparams = llama_model_default_params();
-    mparams.n_gpu_layers = 99;         // Set > 0 if you have GPU acceleration
+    mparams.n_gpu_layers = 99;          // Using 99 to utilize GPU acceleration, tested on Apple Silicon and
+                                        // library correctly utilizes Metal API to take advantage of the chip.
 
     struct llama_context_params ctx_params = llama_context_default_params();
 
     ctx_params.embeddings = false;
     ctx_params.n_ctx     = 2048;        // context size
     ctx_params.n_threads = 4;         // CPU threads for generation (adjust as desired)
-    // etc. for other params ...
 
     // 2. Load the model
     struct llama_model* model = llama_model_load_from_file(model_path.c_str(), mparams);
@@ -38,9 +38,6 @@ int main(int argc, char** argv) {
         fprintf(stderr, "Error: Failed to load model from '%s'\n", model_path.c_str());
         return 1;
     }
-
-
-    
 
     // 3. Create a new context
     struct llama_context* ctx = llama_init_from_model(model, ctx_params);
@@ -77,7 +74,6 @@ int main(int argc, char** argv) {
     const struct llama_vocab* vocab = llama_model_get_vocab(model);
 
     std::vector<llama_token> tokens(prompt.size() + 2); // extra space for BOS, etc.
-    // `add_special = true` will add BOS/EOS if the model wants them
     int n_tokens = llama_tokenize(
         vocab,
         prompt.c_str(),
@@ -96,11 +92,9 @@ int main(int argc, char** argv) {
     }
     tokens.resize(n_tokens);
 
-    // 6. Generate tokens
-    // We'll use the built-in sampler chain for demonstration (top_k, top_p, temp, etc.)
-    // In practice, you can do your own chain or sampling logic.
+    // 5. Generate tokens
    
-    // initialize the sampler
+    // initialize the sampler, sets temperature, distribution for model sampling (using values from llama.cpp repo)
     llama_sampler * smpl_chain = llama_sampler_chain_init(llama_sampler_chain_default_params());
     llama_sampler_chain_add(smpl_chain, llama_sampler_init_min_p(0.05f, 1));
     llama_sampler_chain_add(smpl_chain, llama_sampler_init_temp(0.8f));
@@ -109,7 +103,6 @@ int main(int argc, char** argv) {
     // Print the user prompt first
     printf("%s", prompt.c_str());
 
-    const int n_predict = 128;
     int last_token_pos = n_tokens - 1; // Track the position of the last token
     
     std::string response;
@@ -142,8 +135,8 @@ int main(int argc, char** argv) {
 
         // sample the next token
         new_token_id = llama_sampler_sample(smpl_chain, ctx, -1);
-
-        // is it an end of generation?
+        printf("%d", new_token_id);
+        // check if token generated is end of generation token
         if (llama_vocab_is_eog(vocab, new_token_id)) {
             break;
         }
@@ -163,9 +156,7 @@ int main(int argc, char** argv) {
         batch = llama_batch_get_one(&new_token_id, 1);
     }
 
-    std::cout << response << std::endl;
-
-    // 7. Clean up
+    // 6. Clean up
     llama_sampler_free(smpl_chain); // also frees the individual samplers added to chain
     llama_free(ctx);
     llama_model_free(model);
