@@ -4,6 +4,7 @@
 This repository contains instructions and a simple script allowing for compiled inference of GGUF files utilising the API provided by llama.cpp
 
 ## Prerequisites
+- CMake
 - C++ Compiler (g++, clang)
 - GGUF File for Granite (any other model works)
     https://huggingface.co/lmstudio-community/granite-3.2-8b-instruct-GGUF
