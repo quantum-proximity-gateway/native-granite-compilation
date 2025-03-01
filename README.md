@@ -6,6 +6,7 @@ This repository contains instructions and a simple script allowing for compiled 
 ## Prerequisites
 - C++ Compiler (g++, clang)
 - GGUF File for Granite (any other model works)
+    https://huggingface.co/lmstudio-community/granite-3.2-8b-instruct-GGUF
 
 ## Installation
 1. Clone this repository
