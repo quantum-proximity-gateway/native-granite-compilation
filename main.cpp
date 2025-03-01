@@ -29,7 +29,7 @@ int main(int argc, char** argv) {
     struct llama_context_params ctx_params = llama_context_default_params();
 
     ctx_params.embeddings = false;
-    ctx_params.n_ctx     = 2048;        // context size
+    ctx_params.n_ctx     = 8192;        // context size
     ctx_params.n_threads = 4;         // CPU threads for generation (adjust as desired)
 
     // 2. Load the model
@@ -135,7 +135,7 @@ int main(int argc, char** argv) {
 
         // sample the next token
         new_token_id = llama_sampler_sample(smpl_chain, ctx, -1);
-        
+
         // check if token generated is end of generation token
         if (llama_vocab_is_eog(vocab, new_token_id)) {
             break;
