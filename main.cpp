@@ -135,7 +135,7 @@ int main(int argc, char** argv) {
 
         // sample the next token
         new_token_id = llama_sampler_sample(smpl_chain, ctx, -1);
-        printf("%d", new_token_id);
+        
         // check if token generated is end of generation token
         if (llama_vocab_is_eog(vocab, new_token_id)) {
             break;
