@@ -49,11 +49,16 @@ int main(int argc, char** argv) {
     // Set up conversation
     std::vector<llama_chat_message> messages;
     std::vector<char> formatted(llama_n_ctx(ctx));
-    const char * tmpl = llama_model_chat_template(model, /* name */ nullptr);
+    const char* tmpl = llama_model_chat_template(model, /* name */ nullptr);
     const struct llama_vocab* vocab = llama_model_get_vocab(model);
     
+    // Add a system message to guide the model's behavior
+    const char* system_message = "You are a helpful, friendly AI assistant. Respond to users in a conversational way. "
+                               "Be concise, helpful, and engage with the user's actual query.";
+    messages.push_back({"system", system_message});
+    
     // initialize the sampler, sets temperature, distribution for model sampling
-    llama_sampler * smpl_chain = llama_sampler_chain_init(llama_sampler_chain_default_params());
+    llama_sampler* smpl_chain = llama_sampler_chain_init(llama_sampler_chain_default_params());
     llama_sampler_chain_add(smpl_chain, llama_sampler_init_min_p(0.05f, 1));
     llama_sampler_chain_add(smpl_chain, llama_sampler_init_temp(0.8f));
     llama_sampler_chain_add(smpl_chain, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
@@ -112,9 +117,16 @@ int main(int argc, char** argv) {
             // Reset conversation by clearing KV cache and message history
             llama_kv_cache_clear(ctx);
             
-            // Keep only the current user message
+            // Keep the system message and the current user message
+            llama_chat_message system_msg = messages[0];
             llama_chat_message last_msg = messages.back();
+            
+            // Clear and rebuild messages
+            for (size_t i = 1; i < messages.size(); i++) {
+                free((void*)messages[i].content);
+            }
             messages.clear();
+            messages.push_back(system_msg);
             messages.push_back(last_msg);
             
             // Reformat and try again
@@ -175,9 +187,9 @@ int main(int argc, char** argv) {
         std::cout << "\n\nUser: ";
     }
 
-    // Clean up
-    for (auto& msg : messages) {
-        free((void*)msg.content);
+    // Clean up messages
+    for (size_t i = 1; i < messages.size(); i++) {
+        free((void*)messages[i].content);
     }
     
     llama_sampler_free(smpl_chain); // also frees the individual samplers added to chain
