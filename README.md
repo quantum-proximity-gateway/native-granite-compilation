@@ -28,8 +28,8 @@ This repository contains instructions and a simple script allowing for compiled 
     clang++ -std=c++11 -I./llama.cpp/include -I./llama.cpp/ggml/include main.cpp ./llama.cpp/build/bin/libllama.dylib -o gguf_infer -pthread -Wl,-rpath,./llama.cpp/build/bin;
     ```
 
-5. Run the program with the following parameters
+5. Run the program with the following parameter
     ```bash
-    ./gguf_infer <model-path.gguf> "<prompt text>"
+    ./gguf_infer <model-path.gguf>
     ```
 
