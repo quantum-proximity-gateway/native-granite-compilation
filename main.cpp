@@ -4,6 +4,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <chrono>
 
 #include "llama.h"
 
@@ -150,6 +151,9 @@ int main(int argc, char** argv) {
         std::string response;
         std::cout << "AI: ";
 
+        auto start_time = std::chrono::high_resolution_clock::now();
+        int token_count = 0;
+
         // Generate the response tokens
         while (true) {
             // Sample the next token
@@ -159,6 +163,8 @@ int main(int argc, char** argv) {
             if (llama_vocab_is_eog(vocab, new_token_id)) {
                 break;
             }
+
+            token_count++;
 
             // Convert the token to a string
             char buf[256];
@@ -181,6 +187,15 @@ int main(int argc, char** argv) {
                 break;
             }
         }
+
+        auto end_time = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> elapsed = end_time - start_time;
+        double tokens_per_second = token_count / elapsed.count();
+
+
+        std::cout << "\n\n[Stats: Generated " << token_count << " tokens in " 
+        << std::fixed << elapsed.count() << " seconds | "
+        << std::fixed << tokens_per_second << " tokens/sec]\n\n";
 
         // Add the model's response to the message history
         messages.push_back({"assistant", strdup(response.c_str())});
