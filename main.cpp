@@ -4,6 +4,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <chrono>
 
 #include "llama.h"
 
@@ -12,14 +13,12 @@
 
 int main(int argc, char** argv) {
 
-    if (argc < 3) {
-        fprintf(stderr, "Usage: %s <model-path.gguf> \"<prompt text>\"\n", argv[0]);
+    if (argc < 2) {
+        fprintf(stderr, "Usage: %s <model-path.gguf>\n", argv[0]);
         return 1;
     }
 
     const std::string model_path = argv[1];
-
-    const std::string user     = argv[2];
 
     // 1. Set llama model and context parameters
     struct llama_model_params mparams = llama_model_default_params();
@@ -48,119 +47,169 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-
-    // Prepare prompt
+    // Set up conversation
     std::vector<llama_chat_message> messages;
     std::vector<char> formatted(llama_n_ctx(ctx));
-    const char * tmpl = llama_model_chat_template(model, /* name */ nullptr);
-
-        // add the user input to the message list and format it
-        messages.push_back({"user", strdup(user.c_str())});
-        int new_len = llama_chat_apply_template(tmpl, messages.data(), messages.size(), true, formatted.data(), formatted.size());
-        if (new_len > (int)formatted.size()) {
-            formatted.resize(new_len);
-            new_len = llama_chat_apply_template(tmpl, messages.data(), messages.size(), true, formatted.data(), formatted.size());
-        }
-        if (new_len < 0) {
-            fprintf(stderr, "failed to apply the chat template\n");
-            return 1;
-        }
-
-        // remove previous messages to obtain the prompt to generate the response
-        std::string prompt(formatted.begin(), formatted.begin() + new_len);
-
-    // 4. Tokenize prompt
-    // Use the model’s vocab and call llama_tokenize
+    const char* tmpl = llama_model_chat_template(model, /* name */ nullptr);
     const struct llama_vocab* vocab = llama_model_get_vocab(model);
-
-    std::vector<llama_token> tokens(prompt.size() + 2); // extra space for BOS, etc.
-    int n_tokens = llama_tokenize(
-        vocab,
-        prompt.c_str(),
-        /* text_len       = */ (int32_t) prompt.size(),
-        tokens.data(),
-        /* n_tokens_max   = */ (int32_t) tokens.size(),
-        /* add_special    = */ true,
-        /* parse_special  = */ false
-    );
-
-    if (n_tokens < 0) {
-        fprintf(stderr, "Error: Failed to tokenize prompt (returned %d)\n", n_tokens);
-        llama_free(ctx);
-        llama_model_free(model);
-        return 1;
-    }
-    tokens.resize(n_tokens);
-
-    // 5. Generate tokens
-   
-    // initialize the sampler, sets temperature, distribution for model sampling (using values from llama.cpp repo)
-    llama_sampler * smpl_chain = llama_sampler_chain_init(llama_sampler_chain_default_params());
+    
+    // Add a system message to guide the model's behavior
+    const char* system_message = "You are a helpful, friendly AI assistant. Respond to users in a conversational way. "
+                               "Be concise, helpful, and engage with the user's actual query.";
+    messages.push_back({"system", system_message});
+    
+    // initialize the sampler, sets temperature, distribution for model sampling
+    llama_sampler* smpl_chain = llama_sampler_chain_init(llama_sampler_chain_default_params());
     llama_sampler_chain_add(smpl_chain, llama_sampler_init_min_p(0.05f, 1));
     llama_sampler_chain_add(smpl_chain, llama_sampler_init_temp(0.8f));
     llama_sampler_chain_add(smpl_chain, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
 
-    // Print the user prompt first
-    printf("%s", prompt.c_str());
-
-    int last_token_pos = n_tokens - 1; // Track the position of the last token
+    std::string user_input;
+    bool first_prompt = true;
     
-    std::string response;
+    std::cout << "Conversation started. Type 'exit' to end.\n";
+    std::cout << "User: ";
+    
+    while (std::getline(std::cin, user_input)) {
+        if (user_input == "exit") {
+            break;
+        }
+        
+        // Add the user input to the message history
+        messages.push_back({"user", strdup(user_input.c_str())});
+        
+        // Format the conversation using the chat template
+        int new_len = llama_chat_apply_template(tmpl, messages.data(), messages.size(), true, 
+                                               formatted.data(), formatted.size());
+        if (new_len > (int)formatted.size()) {
+            formatted.resize(new_len);
+            new_len = llama_chat_apply_template(tmpl, messages.data(), messages.size(), true, 
+                                              formatted.data(), formatted.size());
+        }
+        if (new_len < 0) {
+            fprintf(stderr, "Failed to apply the chat template\n");
+            continue;
+        }
 
-    const bool is_first = llama_get_kv_cache_used_cells(ctx) == 0;
+        // Get the formatted conversation
+        std::string prompt(formatted.begin(), formatted.begin() + new_len);
 
-    // tokenize the prompt
-    const int n_prompt_tokens = -llama_tokenize(vocab, prompt.c_str(), prompt.size(), NULL, 0, is_first, true);
-    std::vector<llama_token> prompt_tokens(n_prompt_tokens);
-    if (llama_tokenize(vocab, prompt.c_str(), prompt.size(), prompt_tokens.data(), prompt_tokens.size(), is_first, true) < 0) {
-        //GGML_ABORT("failed to tokenize the prompt\n");
-    }
+        // Prepare for token generation
+        const bool is_first = first_prompt;
+        first_prompt = false;
 
-    // prepare a batch for the prompt
-    llama_batch batch = llama_batch_get_one(prompt_tokens.data(), prompt_tokens.size());
-    llama_token new_token_id;
-    while (true) {
-        // check if we have enough space in the context to evaluate this batch
+        // Tokenize the prompt
+        const int n_prompt_tokens = -llama_tokenize(vocab, prompt.c_str(), prompt.size(), NULL, 0, is_first, true);
+        std::vector<llama_token> prompt_tokens(n_prompt_tokens);
+        if (llama_tokenize(vocab, prompt.c_str(), prompt.size(), prompt_tokens.data(), prompt_tokens.size(), is_first, true) < 0) {
+            fprintf(stderr, "Failed to tokenize the prompt\n");
+            continue;
+        }
+
+        // Prepare a batch for the prompt
+        llama_batch batch = llama_batch_get_one(prompt_tokens.data(), prompt_tokens.size());
+        
+        // Check if the context has enough space
         int n_ctx = llama_n_ctx(ctx);
         int n_ctx_used = llama_get_kv_cache_used_cells(ctx);
         if (n_ctx_used + batch.n_tokens > n_ctx) {
-            printf("\033[0m\n");
-            fprintf(stderr, "context size exceeded\n");
-            exit(0);
+            fprintf(stderr, "Context size exceeded, clearing conversation history\n");
+            
+            // Reset conversation by clearing KV cache and message history
+            llama_kv_cache_clear(ctx);
+            
+            // Keep the system message and the current user message
+            llama_chat_message system_msg = messages[0];
+            llama_chat_message last_msg = messages.back();
+            
+            // Clear and rebuild messages
+            for (size_t i = 1; i < messages.size(); i++) {
+                free((void*)messages[i].content);
+            }
+            messages.clear();
+            messages.push_back(system_msg);
+            messages.push_back(last_msg);
+            
+            // Reformat and try again
+            new_len = llama_chat_apply_template(tmpl, messages.data(), messages.size(), true, 
+                                              formatted.data(), formatted.size());
+            prompt = std::string(formatted.begin(), formatted.begin() + new_len);
+            
+            // Re-tokenize with fresh context
+            const int n_retry_tokens = -llama_tokenize(vocab, prompt.c_str(), prompt.size(), NULL, 0, true, true);
+            prompt_tokens.resize(n_retry_tokens);
+            llama_tokenize(vocab, prompt.c_str(), prompt.size(), prompt_tokens.data(), prompt_tokens.size(), true, true);
+            batch = llama_batch_get_one(prompt_tokens.data(), prompt_tokens.size());
         }
 
+        // Process the batch
         if (llama_decode(ctx, batch)) {
-            //GGML_ABORT("failed to decode\n");
+            fprintf(stderr, "Failed to decode\n");
+            continue;
         }
 
-        // sample the next token
-        new_token_id = llama_sampler_sample(smpl_chain, ctx, -1);
+        std::string response;
+        std::cout << "AI: ";
 
-        // check if token generated is end of generation token
-        if (llama_vocab_is_eog(vocab, new_token_id)) {
-            break;
+        auto start_time = std::chrono::high_resolution_clock::now();
+        int token_count = 0;
+
+        // Generate the response tokens
+        while (true) {
+            // Sample the next token
+            llama_token new_token_id = llama_sampler_sample(smpl_chain, ctx, -1);
+
+            // Check if token generated is end of generation token
+            if (llama_vocab_is_eog(vocab, new_token_id)) {
+                break;
+            }
+
+            token_count++;
+
+            // Convert the token to a string
+            char buf[256];
+            int n = llama_token_to_piece(vocab, new_token_id, buf, sizeof(buf), 0, true);
+            if (n < 0) {
+                fprintf(stderr, "Failed to convert token to piece\n");
+                break;
+            }
+            
+            std::string piece(buf, n);
+            std::cout << piece << std::flush;
+            response += piece;
+
+            // Prepare the next batch with the sampled token
+            batch = llama_batch_get_one(&new_token_id, 1);
+            
+            // Process this new token
+            if (llama_decode(ctx, batch)) {
+                fprintf(stderr, "Failed to decode\n");
+                break;
+            }
         }
 
-        // convert the token to a string, print it and add it to the response
-        char buf[256];
-        int n = llama_token_to_piece(vocab, new_token_id, buf, sizeof(buf), 0, true);
-        if (n < 0) {
-            //GGML_ABORT("failed to convert token to piece\n");
-        }
-        std::string piece(buf, n);
-        printf("%s", piece.c_str());
-        fflush(stdout);
-        response += piece;
+        auto end_time = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> elapsed = end_time - start_time;
+        double tokens_per_second = token_count / elapsed.count();
 
-        // prepare the next batch with the sampled token
-        batch = llama_batch_get_one(&new_token_id, 1);
+
+        std::cout << "\n\n[Stats: Generated " << token_count << " tokens in " 
+        << std::fixed << elapsed.count() << " seconds | "
+        << std::fixed << tokens_per_second << " tokens/sec]\n\n";
+
+        // Add the model's response to the message history
+        messages.push_back({"assistant", strdup(response.c_str())});
+        std::cout << "\n\nUser: ";
     }
 
-    // 6. Clean up
+    // Clean up messages
+    for (size_t i = 1; i < messages.size(); i++) {
+        free((void*)messages[i].content);
+    }
+    
     llama_sampler_free(smpl_chain); // also frees the individual samplers added to chain
     llama_free(ctx);
     llama_model_free(model);
 
-    printf("\n");
     return 0;
 }
